@@ -1,0 +1,6 @@
+{
+  "name": "SHAD SODAI - Premium Natural Food",
+  "description": "SHAD SODAI premium natural dry food e-commerce platform offering sun-dried fruits, nuts, seeds, and healthy foods with customer dashboard and admin management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

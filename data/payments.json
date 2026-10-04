@@ -1,0 +1,30 @@
+[
+  {
+    "id": "pay-1791034859720-450",
+    "order_id": "ord-test-01",
+    "order_number": "SG-998877",
+    "customer_id": "",
+    "customer_name": "Test Buyer",
+    "customer_phone": "01700-112233",
+    "customer_email": "",
+    "payment_method": "bkash",
+    "gateway": "bkash_merchant",
+    "transaction_id": "TRX-859720-5630",
+    "amount": 1250,
+    "currency": "BDT",
+    "status": "paid",
+    "gateway_response": {
+      "initiated_at": "2026-10-03T13:40:59.720Z",
+      "mode": "sandbox",
+      "credentials_status": "placeholder_or_configured",
+      "note": "Payment session created server-side. Awaiting verification/callback.",
+      "verified_at": "2026-10-03T13:41:08.561Z",
+      "verification_status": "SUCCESS",
+      "gateway_trx_id": "TRX-859720-5630",
+      "verification_method": "SERVER_CALLBACK_OR_ADMIN_CONFIRMATION"
+    },
+    "paid_at": "2026-10-03T13:41:08.561Z",
+    "created_at": "2026-10-03T13:40:59.720Z",
+    "updated_at": "2026-10-03T13:41:08.561Z"
+  }
+]

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Product, Category, CartItem, Order, OrderItem, Review, Banner, SiteSettings, ProductVariant, ProcessStep, User, Customer, SupportMessage, StockHistoryRecord, CalculationRecord, SeoSettings, AdminProfile, PaymentAccountConfig, PaymentRecord, QuickLinkItem } from '../types';
-import { DataService, AuthService, isSupabaseConfigured } from '../services/supabase';
-import { INITIAL_QUICK_LINKS } from '../data/initialCatalog';
+import { Product, Category, Brand, CartItem, Order, OrderItem, Review, Banner, SiteSettings, ProductVariant, ProcessStep, User, Customer, SupportMessage, StockHistoryRecord, CalculationRecord, SeoSettings, AdminProfile, PaymentAccountConfig, PaymentRecord, QuickLinkItem } from '../types';
+import { DataService, AuthService, isSupabaseConfigured, getActiveSupabaseConfig, updateSupabaseConfig, resetSupabaseConfig } from '../services/supabase';
+import { INITIAL_QUICK_LINKS, INITIAL_BRANDS } from '../data/initialCatalog';
 
 interface Toast {
   id: string;
@@ -12,6 +12,7 @@ interface Toast {
 interface StoreContextType {
   products: Product[];
   categories: Category[];
+  brands: Brand[];
   banners: Banner[];
   reviews: Review[];
   allReviews: Review[];
@@ -19,6 +20,12 @@ interface StoreContextType {
   settings: SiteSettings;
   loading: boolean;
   isSupabaseActive: boolean;
+
+  // Supabase Database Connection
+  supabaseConfig: { url: string; anonKey: string; isConfigured: boolean };
+  connectSupabase: (url: string, anonKey: string) => Promise<{ success: boolean; message: string; tablesPending?: boolean }>;
+  disconnectSupabase: () => Promise<void>;
+  checkSupabaseHealth: () => Promise<{ connected: boolean; message: string; tablesPending?: boolean; productCount?: number }>;
 
   // Stock Management
   stockHistory: StockHistoryRecord[];
@@ -153,11 +160,13 @@ interface StoreContextType {
     payment_proof?: string;
   }) => Promise<Order>;
 
-  // Admin Product, Category, Banner, Review & Process Management
+  // Admin Product, Category, Brand, Banner, Review & Process Management
   saveProduct: (product: Product) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
   saveCategory: (category: Category) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
+  saveBrand: (brand: Brand) => Promise<void>;
+  deleteBrand: (id: string) => Promise<void>;
   saveBanner: (banner: Banner) => Promise<void>;
   deleteBanner: (id: string) => Promise<void>;
   saveProcessStep: (step: ProcessStep) => Promise<void>;
@@ -189,6 +198,7 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined);
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>(INITIAL_BRANDS);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [allReviews, setAllReviews] = useState<Review[]>([]);
@@ -205,7 +215,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [quickLinks, setQuickLinks] = useState<QuickLinkItem[]>(INITIAL_QUICK_LINKS);
   const [loading, setLoading] = useState<boolean>(true);
-  const [isSupabaseActive] = useState<boolean>(isSupabaseConfigured);
+  const [supabaseConfig, setSupabaseConfigState] = useState(() => getActiveSupabaseConfig());
+  const [isSupabaseActive, setIsSupabaseActive] = useState<boolean>(() => isSupabaseConfigured);
 
   // Auth state
   const [currentUser, setCurrentUser] = useState<User | null>(() => AuthService.getCurrentUser());
@@ -325,8 +336,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshData = useCallback(async () => {
     try {
       setLoading(true);
-      const [cats, prods, bans, revs, allRevs, procs, sets, ords, custs, msgs, stks, calcs, seo, adm, payCfgs, payRecs, qLinks] = await Promise.all([
+      const [cats, brds, prods, bans, revs, allRevs, procs, sets, ords, custs, msgs, stks, calcs, seo, adm, payCfgs, payRecs, qLinks] = await Promise.all([
         DataService.getCategories(),
+        DataService.getBrands(),
         DataService.getProducts(),
         DataService.getAllBanners(),
         DataService.getReviews(),
@@ -345,6 +357,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         DataService.getQuickLinks()
       ]);
       setCategories(cats);
+      setBrands(brds);
       setProducts(prods);
       setBanners(bans);
       setReviews(revs);
@@ -371,6 +384,43 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     refreshData();
   }, [refreshData]);
+
+  // Supabase Database Connection Management
+  const checkSupabaseHealth = useCallback(async () => {
+    return await DataService.checkConnection();
+  }, []);
+
+  const connectSupabase = useCallback(
+    async (url: string, anonKey: string) => {
+      const res = updateSupabaseConfig(url, anonKey);
+      if (!res.success) {
+        showToast(res.error || 'Failed to initialize Supabase credentials.', 'error');
+        return { success: false, message: res.error || 'Failed to initialize Supabase credentials.' };
+      }
+
+      setSupabaseConfigState(getActiveSupabaseConfig());
+      setIsSupabaseActive(true);
+
+      const health = await DataService.checkConnection();
+      if (health.connected) {
+        await refreshData();
+        showToast(health.message, 'success');
+        return { success: true, message: health.message, tablesPending: health.tablesPending, productCount: health.productCount };
+      } else {
+        showToast(health.message, 'error');
+        return { success: false, message: health.message };
+      }
+    },
+    [refreshData, showToast]
+  );
+
+  const disconnectSupabase = useCallback(async () => {
+    resetSupabaseConfig();
+    setSupabaseConfigState(getActiveSupabaseConfig());
+    setIsSupabaseActive(false);
+    await refreshData();
+    showToast('Supabase disconnected. Using local database store.', 'info');
+  }, [refreshData, showToast]);
 
   // Auth Methods
   const login = useCallback(
@@ -909,7 +959,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (product: Product) => {
       await DataService.saveProduct(product);
       await refreshData();
-      showToast('Product saved successfully!');
+      showToast('Product saved to database successfully!');
     },
     [refreshData, showToast]
   );
@@ -917,8 +967,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const deleteProduct = useCallback(
     async (id: string) => {
       await DataService.deleteProduct(id);
+      setProducts((prev) => prev.filter((p) => p.id !== id));
       await refreshData();
-      showToast('Product removed', 'info');
+      showToast('Product deleted from database', 'info');
     },
     [refreshData, showToast]
   );
@@ -937,6 +988,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await DataService.deleteCategory(id);
       await refreshData();
       showToast('Category removed', 'info');
+    },
+    [refreshData, showToast]
+  );
+
+  const saveBrand = useCallback(
+    async (brand: Brand) => {
+      await DataService.saveBrand(brand);
+      await refreshData();
+      showToast('Brand saved to database!');
+    },
+    [refreshData, showToast]
+  );
+
+  const deleteBrand = useCallback(
+    async (id: string) => {
+      await DataService.deleteBrand(id);
+      setBrands((prev) => prev.filter((b) => b.id !== id));
+      await refreshData();
+      showToast('Brand removed from database', 'info');
     },
     [refreshData, showToast]
   );
@@ -1071,6 +1141,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       value={{
         products,
         categories,
+        brands,
         banners,
         reviews,
         allReviews,
@@ -1078,6 +1149,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         settings,
         loading,
         isSupabaseActive,
+        supabaseConfig,
+        connectSupabase,
+        disconnectSupabase,
+        checkSupabaseHealth,
         stockHistory,
         adjustStock,
         calculations,
@@ -1139,6 +1214,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deleteProduct,
         saveCategory,
         deleteCategory,
+        saveBrand,
+        deleteBrand,
         saveBanner,
         deleteBanner,
         saveProcessStep,

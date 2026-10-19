@@ -17,7 +17,13 @@ import {
   LogOut,
   RefreshCw,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Wifi,
+  WifiOff,
+  Activity,
+  ExternalLink
 } from 'lucide-react';
 
 interface AdminSettingsProps {
@@ -27,7 +33,20 @@ interface AdminSettingsProps {
 export const AdminSettings: React.FC<AdminSettingsProps> = ({ subTab: propSubTab }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { settings, saveSettings, isSupabaseActive, adminProfile, saveAdminProfile, logout, showToast, refreshData } = useStore();
+  const {
+    settings,
+    saveSettings,
+    isSupabaseActive,
+    supabaseConfig,
+    connectSupabase,
+    disconnectSupabase,
+    checkSupabaseHealth,
+    adminProfile,
+    saveAdminProfile,
+    logout,
+    showToast,
+    refreshData
+  } = useStore();
 
   const getActiveTabFromLocation = (): 'general' | 'profile' | 'security' => {
     if (propSubTab) return propSubTab;
@@ -41,6 +60,25 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({ subTab: propSubTab
   useEffect(() => {
     setActiveTab(getActiveTabFromLocation());
   }, [location.pathname, propSubTab]);
+
+  // Supabase Connection Form State
+  const [supabaseUrl, setSupabaseUrl] = useState(supabaseConfig?.url || '');
+  const [supabaseAnonKey, setSupabaseAnonKey] = useState(supabaseConfig?.anonKey || '');
+  const [showAnonKey, setShowAnonKey] = useState(false);
+  const [isConnectingSupabase, setIsConnectingSupabase] = useState(false);
+  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+  const [connectionHealth, setConnectionHealth] = useState<{
+    tested: boolean;
+    connected: boolean;
+    message: string;
+    tablesPending?: boolean;
+    productCount?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (supabaseConfig?.url) setSupabaseUrl(supabaseConfig.url);
+    if (supabaseConfig?.anonKey) setSupabaseAnonKey(supabaseConfig.anonKey);
+  }, [supabaseConfig]);
 
   // General Settings Form
   const [generalForm, setGeneralForm] = useState(settings);
@@ -107,6 +145,56 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({ subTab: propSubTab
     } else {
       showToast('Security settings preserved', 'info');
     }
+  };
+
+  const handleConnectSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabaseUrl.trim() || !supabaseAnonKey.trim()) {
+      showToast('Please enter both Supabase Project URL and Anon/Public Key', 'error');
+      return;
+    }
+    setIsConnectingSupabase(true);
+    try {
+      const res = await connectSupabase(supabaseUrl.trim(), supabaseAnonKey.trim());
+      setConnectionHealth({
+        tested: true,
+        connected: res.success,
+        message: res.message,
+        tablesPending: res.tablesPending,
+        productCount: res.productCount
+      });
+    } finally {
+      setIsConnectingSupabase(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTestingSupabase(true);
+    try {
+      const health = await checkSupabaseHealth();
+      setConnectionHealth({
+        tested: true,
+        connected: health.connected,
+        message: health.message,
+        tablesPending: health.tablesPending,
+        productCount: health.productCount
+      });
+      if (health.connected) {
+        showToast(health.message, 'success');
+      } else {
+        showToast(health.message, 'error');
+      }
+    } finally {
+      setIsTestingSupabase(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm('Are you sure you want to disconnect from this Supabase database? You can reconnect anytime.')) {
+      return;
+    }
+    await disconnectSupabase();
+    setConnectionHealth(null);
   };
 
   const handleCopySql = () => {
@@ -203,59 +291,189 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({ subTab: propSubTab
       {activeTab === 'general' && (
         <div className="space-y-6 max-w-4xl">
           
-          {/* Supabase Status Card */}
-          <div className="bg-white border border-slate-200/90 rounded-[18px] p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 bg-purple-50 text-purple-700 rounded-xl flex items-center justify-center">
+          {/* Supabase Database Connection Manager Card */}
+          <div className="bg-white border border-slate-200/90 rounded-[18px] p-5 sm:p-6 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-4 gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-50 text-purple-700 rounded-xl flex items-center justify-center shrink-0">
                   <Database className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-900">
-                    Supabase PostgreSQL Cloud Integration
+                    Supabase PostgreSQL Cloud Database
                   </h3>
-                  <p className="text-xs text-slate-400">
-                    Direct live connection for products, categories, orders, customers & banners
+                  <p className="text-xs text-slate-500">
+                    Connect your live Supabase project to sync products, categories, orders, customers &amp; CMS
                   </p>
                 </div>
               </div>
 
-              <span
-                className={`px-3 py-1 text-xs font-bold rounded-full ${
-                  isSupabaseActive
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-purple-100 text-purple-800'
-                }`}
-              >
-                {isSupabaseActive ? '● Supabase Connected' : '● Integrated Offline Cache'}
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span
+                  className={`px-3 py-1.5 text-xs font-bold rounded-full flex items-center gap-1.5 ${
+                    isSupabaseActive
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      isSupabaseActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                    }`}
+                  />
+                  <span>{isSupabaseActive ? 'Supabase Connected' : 'Offline / Local Cache'}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Connection Credentials Form */}
+            <form onSubmit={handleConnectSupabase} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Supabase Project URL *
+                    </label>
+                    <a
+                      href="https://supabase.com/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] font-semibold text-purple-600 hover:text-purple-800 flex items-center gap-1"
+                    >
+                      <span>Supabase Dashboard</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                  <input
+                    type="url"
+                    required
+                    value={supabaseUrl}
+                    onChange={(e) => setSupabaseUrl(e.target.value)}
+                    placeholder="https://your-project-id.supabase.co"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-purple-600"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Find in Supabase: <span className="font-semibold text-slate-600">Project Settings → API → Project URL</span>
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Project API Key (anon / public) *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showAnonKey ? 'text' : 'password'}
+                      required
+                      value={supabaseAnonKey}
+                      onChange={(e) => setSupabaseAnonKey(e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 pr-10 text-xs font-mono text-slate-900 focus:outline-none focus:border-purple-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAnonKey(!showAnonKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showAnonKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Find in Supabase: <span className="font-semibold text-slate-600">Project Settings → API → Project API Keys (anon public)</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Banner when tested */}
+              {connectionHealth && (
+                <div
+                  className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 ${
+                    connectionHealth.connected
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-red-50 border-red-200 text-red-800'
+                  }`}
+                >
+                  {connectionHealth.connected ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <p className="font-semibold">{connectionHealth.message}</p>
+                    {connectionHealth.tablesPending && (
+                      <p className="text-[11px] text-emerald-700">
+                        Tip: Click &quot;Copy Supabase SQL Schema&quot; below, paste it into your Supabase SQL Editor and run it, then click &quot;Seed Initial Catalog&quot;.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={isConnectingSupabase}
+                  className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Wifi className="w-4 h-4" />
+                  <span>{isConnectingSupabase ? 'Connecting...' : (isSupabaseActive ? 'Update Connection' : 'Connect Database')}</span>
+                </button>
+
+                {isSupabaseActive && (
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTestingSupabase}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Activity className={`w-3.5 h-3.5 ${isTestingSupabase ? 'animate-spin' : ''}`} />
+                    <span>{isTestingSupabase ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+                )}
+
+                {isSupabaseActive && (
+                  <button
+                    type="button"
+                    onClick={handleDisconnect}
+                    className="px-3.5 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors border border-red-200 cursor-pointer"
+                  >
+                    <WifiOff className="w-3.5 h-3.5" />
+                    <span>Disconnect</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedSql ? 'SQL Copied!' : 'Copy Supabase SQL Schema'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSeedDatabase}
+                  disabled={isSeeding}
+                  className="px-4 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors border border-purple-200 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSeeding ? 'animate-spin' : ''}`} />
+                  <span>{isSeeding ? 'Seeding...' : 'Seed Initial Catalog'}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Quick 3-Step Setup Instructions */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 text-xs text-slate-600 space-y-1.5">
+              <span className="font-extrabold uppercase text-[10px] tracking-wider text-slate-500 block">
+                How to connect in 3 simple steps:
               </span>
-            </div>
-
-            <div className="text-xs text-slate-600 space-y-2">
-              <p>
-                All data additions, edits, and deletions update the Supabase database. You can copy the complete PostgreSQL SQL schema below or re-seed the fashion catalog anytime.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleCopySql}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>{copiedSql ? 'SQL Copied!' : 'Copy Supabase SQL Schema'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSeedDatabase}
-                disabled={isSeeding}
-                className="px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors border border-purple-200"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSeeding ? 'animate-spin' : ''}`} />
-                <span>{isSeeding ? 'Seeding...' : 'Seed Initial Catalog'}</span>
-              </button>
+              <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600">
+                <li>Create a project on <strong>supabase.com</strong> (or open your existing project).</li>
+                <li>Go to <strong>Project Settings → API</strong> to copy your <strong>Project URL</strong> and <strong>anon/public</strong> key.</li>
+                <li>Go to <strong>SQL Editor</strong> in Supabase, click <strong>&quot;Copy Supabase SQL Schema&quot;</strong> above, paste &amp; click <strong>Run</strong>, then enter your credentials above and click <strong>&quot;Connect Database&quot;</strong>.</li>
+              </ol>
             </div>
           </div>
 

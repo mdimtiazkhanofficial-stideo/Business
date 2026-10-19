@@ -1,3 +1,14 @@
+export interface Brand {
+  id: string;
+  name: string;
+  slug: string;
+  logo_url?: string;
+  description?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ProductColor {
   name: string; // e.g. 'Jet Black', 'Navy Blue', 'Olive Green'
   hex?: string; // e.g. '#111111', '#1B365D', '#556B2F'
@@ -8,14 +19,21 @@ export interface ProductVariant {
   id: string;
   product_id?: string;
   size?: string; // e.g. 'S', 'M', 'L', 'XL', 'XXL', '30', '32', '34'
+  weight?: string; // e.g. '100g', '250g', '500g', '1kg'
   color?: string; // e.g. 'Black', 'Navy Blue', 'White'
   color_code?: string; // e.g. '#000000'
   image?: string; // variant-specific image URL
-  weight?: string; // legacy fallback
+  regular_price?: number; // Regular price in BDT (৳)
+  discount_price?: number; // Discount price in BDT (৳)
+  selling_price?: number; // Effective selling price in BDT (৳)
+  buying_price?: number; // Buying/Investment price in BDT (৳)
+  extra_price?: number; // Extra price added for this variant
   price: number; // Current selling price in BDT (৳)
   original_price: number; // Regular/previous price in BDT (৳)
   stock: number;
   sku?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface SizeVariant {
@@ -41,19 +59,24 @@ export interface Product {
   sku: string;
   category_id: string;
   category_name?: string;
+  brand_id?: string;
+  brand?: string; // e.g. 'SHAD SODAI'
   main_image: string;
   gallery_images: string[];
   short_description: string;
+  description?: string;
   long_description: string;
-  buying_price: number;
-  selling_price: number;
-  discount_price?: number;
+  regular_price?: number; // Regular price in BDT (৳)
+  discount_price?: number; // Discount price in BDT (৳)
+  selling_price: number; // Effective customer selling price in BDT (৳)
+  buying_price: number; // Investment / Buying price in BDT (৳)
   stock: number;
-  rating: number;
-  review_count: number;
-  brand?: string; // e.g. 'SHAD SODAI'
+  weight_options?: string[]; // Dynamic Weight/Gram options (e.g. ['100g', '250g', '500g', '1kg'])
   sizes?: string[]; // Dynamic sizes configured in admin (e.g. ['S', 'M', 'L', 'XL'])
   colors?: ProductColor[]; // Dynamic colors configured in admin
+  keywords?: string[]; // Search & SEO keywords
+  tags?: string[]; // Product tags / keywords
+  features?: string[]; // Key product features / highlights
   fabric?: string; // e.g. '100% Combed Compact Cotton, 240 GSM'
   material?: string; // e.g. 'Organic Cotton Twill'
   fit?: string; // e.g. 'Regular Fit'
@@ -66,7 +89,6 @@ export interface Product {
   care_instructions?: string; // e.g. 'Machine wash cold with like colors'
   exchange_policy?: string; // e.g. '7-Day Easy Exchange & Replacement'
   size_chart?: SizeChartRow[];
-  tags?: string[];
   sizeVariants?: SizeVariant[];
   size_variants?: SizeVariant[];
   variants: ProductVariant[];
@@ -85,6 +107,8 @@ export interface Product {
   delivery_info: string;
   seo_title: string;
   seo_description: string;
+  rating: number;
+  review_count: number;
   status: 'active' | 'inactive' | 'draft';
   is_featured?: boolean;
   is_popular?: boolean;
@@ -93,6 +117,7 @@ export interface Product {
   original_price?: number;
   sale_count?: number;
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface Category {
@@ -108,6 +133,8 @@ export interface Category {
   is_active: boolean;
   show_on_homepage: boolean;
   product_count?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CartItem {

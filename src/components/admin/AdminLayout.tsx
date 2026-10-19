@@ -97,10 +97,17 @@ export const AdminLayout: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="hidden lg:flex items-center gap-1.5 text-xs text-stone-600">
+          <Link
+            to="/admin/settings"
+            title="Configure Supabase Database"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-xs border border-stone-200 hover:bg-stone-50 transition-colors"
+          >
             <Database className="w-3.5 h-3.5 text-[#1B4332]" />
-            <span>{isSupabaseActive ? 'Supabase Connected' : 'Integrated Database'}</span>
-          </div>
+            <span className={`w-2 h-2 rounded-full ${isSupabaseActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+            <span className="font-semibold text-stone-700">
+              {isSupabaseActive ? 'Supabase Connected' : 'Connect Supabase'}
+            </span>
+          </Link>
 
           <Link
             to="/"
@@ -147,6 +154,24 @@ export const AdminLayout: React.FC = () => {
             >
               <X className="w-4 h-4" />
             </button>
+          </div>
+
+          {/* Database connection badge in mobile drawer */}
+          <div className="md:hidden px-1 mb-2">
+            <Link
+              to="/admin/settings"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center justify-between px-2.5 py-1.5 bg-stone-50 border border-stone-200 rounded-xs text-[11px]"
+            >
+              <span className="flex items-center gap-1.5 font-bold text-stone-700">
+                <Database className="w-3.5 h-3.5 text-[#1B4332]" />
+                Database
+              </span>
+              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-stone-600">
+                <span className={`w-2 h-2 rounded-full ${isSupabaseActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+                {isSupabaseActive ? 'Connected' : 'Connect'}
+              </span>
+            </Link>
           </div>
 
           <nav className="space-y-1 m-0 p-0">

@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   Product,
   Category,
+  Brand,
   Order,
   Review,
   Banner,
@@ -20,7 +21,7 @@ import {
   QuickLinkItem,
   QuickLinkSectionItem
 } from '../types';
-import { INITIAL_PRODUCTS, INITIAL_CATEGORIES, INITIAL_BANNERS, INITIAL_REVIEWS, INITIAL_SETTINGS, INITIAL_PROCESS_STEPS, INITIAL_QUICK_LINKS } from '../data/initialCatalog';
+import { INITIAL_PRODUCTS, INITIAL_CATEGORIES, INITIAL_BRANDS, INITIAL_BANNERS, INITIAL_REVIEWS, INITIAL_SETTINGS, INITIAL_PROCESS_STEPS, INITIAL_QUICK_LINKS } from '../data/initialCatalog';
 
 const DEMO_ACCOUNT_NUMBERS = new Set([
   '01711-223344',
@@ -104,18 +105,109 @@ export const DEFAULT_PAYMENT_CONFIGS: PaymentAccountConfig[] = [
 ];
 
 const env = (import.meta as any).env || {};
-const SUPABASE_URL = env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || '';
 
-export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_URL.startsWith('http'));
+function loadInitialSupabaseConfig() {
+  let url = env.VITE_SUPABASE_URL || '';
+  let anonKey = env.VITE_SUPABASE_ANON_KEY || '';
+
+  if (!url || !anonKey) {
+    try {
+      const savedUrl = localStorage.getItem('shadsodai_supabase_url');
+      const savedKey = localStorage.getItem('shadsodai_supabase_anon_key');
+      if (savedUrl && savedKey) {
+        url = savedUrl;
+        anonKey = savedKey;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { url: url.trim(), anonKey: anonKey.trim() };
+}
+
+let { url: activeSupabaseUrl, anonKey: activeSupabaseAnonKey } = loadInitialSupabaseConfig();
+
+export let isSupabaseConfigured = Boolean(
+  activeSupabaseUrl &&
+  activeSupabaseAnonKey &&
+  activeSupabaseUrl.startsWith('http')
+);
 
 export let supabase: SupabaseClient | null = null;
 
-if (isSupabaseConfigured) {
+function initSupabaseClient(url: string, key: string): SupabaseClient | null {
+  if (!url || !key || !url.startsWith('http')) return null;
   try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return createClient(url, key, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true
+      }
+    });
   } catch (err) {
     console.warn('Failed to initialize Supabase client:', err);
+    return null;
+  }
+}
+
+if (isSupabaseConfigured) {
+  supabase = initSupabaseClient(activeSupabaseUrl, activeSupabaseAnonKey);
+}
+
+export function getActiveSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+  return {
+    url: activeSupabaseUrl,
+    anonKey: activeSupabaseAnonKey,
+    isConfigured: isSupabaseConfigured
+  };
+}
+
+export function updateSupabaseConfig(url: string, anonKey: string): { success: boolean; error?: string } {
+  try {
+    const cleanUrl = url.trim();
+    const cleanKey = anonKey.trim();
+    if (!cleanUrl.startsWith('http')) {
+      return { success: false, error: 'Project URL must start with https://' };
+    }
+    if (!cleanKey) {
+      return { success: false, error: 'Supabase anon/public key is required.' };
+    }
+
+    const client = initSupabaseClient(cleanUrl, cleanKey);
+    if (!client) {
+      return { success: false, error: 'Could not initialize Supabase with provided credentials.' };
+    }
+
+    activeSupabaseUrl = cleanUrl;
+    activeSupabaseAnonKey = cleanKey;
+    supabase = client;
+    isSupabaseConfigured = true;
+
+    localStorage.setItem('shadsodai_supabase_url', cleanUrl);
+    localStorage.setItem('shadsodai_supabase_anon_key', cleanKey);
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update Supabase configuration.' };
+  }
+}
+
+export function resetSupabaseConfig(): void {
+  try {
+    localStorage.removeItem('shadsodai_supabase_url');
+    localStorage.removeItem('shadsodai_supabase_anon_key');
+    activeSupabaseUrl = env.VITE_SUPABASE_URL || '';
+    activeSupabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
+    if (activeSupabaseUrl && activeSupabaseAnonKey) {
+      supabase = initSupabaseClient(activeSupabaseUrl, activeSupabaseAnonKey);
+      isSupabaseConfigured = true;
+    } else {
+      supabase = null;
+      isSupabaseConfigured = false;
+    }
+  } catch (err) {
+    console.error('Error resetting Supabase config:', err);
   }
 }
 
@@ -315,17 +407,30 @@ export const AuthService = {
 
 export const DataService = {
   // Check connection
-  async checkConnection(): Promise<{ connected: boolean; message: string }> {
+  async checkConnection(): Promise<{ connected: boolean; message: string; tablesPending?: boolean; productCount?: number }> {
     if (!supabase) {
       return {
         connected: false,
-        message: 'Supabase credentials not configured in environment. Using high-performance integrated catalog store.'
+        message: 'Supabase credentials not configured. Please enter your Supabase Project URL & Anon Key.'
       };
     }
     try {
-      const { data, error } = await supabase.from('products').select('count', { count: 'exact', head: true });
-      if (error) throw error;
-      return { connected: true, message: `Connected to Supabase! Found ${data ?? 0} products.` };
+      const { error, count } = await supabase.from('products').select('*', { count: 'exact', head: true });
+      if (error) {
+        if (error.code === '42P01') {
+          return {
+            connected: true,
+            tablesPending: true,
+            message: 'Connected to Supabase, but "products" table was not found yet. Run the SQL Schema script in your Supabase SQL Editor.'
+          };
+        }
+        throw error;
+      }
+      return {
+        connected: true,
+        productCount: count ?? 0,
+        message: `Connected to Supabase! Live database verified (${count ?? 0} products found).`
+      };
     } catch (err: any) {
       return { connected: false, message: err?.message || 'Failed to connect to Supabase.' };
     }
@@ -398,6 +503,70 @@ export const DataService = {
     return true;
   },
 
+  // 1.1 Brands
+  async getBrands(): Promise<Brand[]> {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('brands')
+          .select('*')
+          .order('name', { ascending: true });
+
+        if (!error && data) {
+          return data as Brand[];
+        }
+      } catch (err) {
+        console.warn('Supabase fetch brands fallback:', err);
+      }
+    }
+    return getStored<Brand[]>('brands', INITIAL_BRANDS);
+  },
+
+  async saveBrand(brand: Brand): Promise<Brand> {
+    const brands = await this.getBrands();
+    const existingIndex = brands.findIndex((b) => b.id === brand.id);
+    let updatedBrands: Brand[];
+
+    if (existingIndex >= 0) {
+      updatedBrands = brands.map((b) => (b.id === brand.id ? brand : b));
+    } else {
+      updatedBrands = [...brands, brand];
+    }
+    setStored('brands', updatedBrands);
+
+    if (supabase) {
+      try {
+        await supabase.from('brands').upsert({
+          id: brand.id,
+          name: brand.name,
+          slug: brand.slug,
+          logo_url: brand.logo_url || null,
+          description: brand.description || '',
+          is_active: brand.is_active !== false
+        });
+      } catch (err) {
+        console.error('Error upserting brand to Supabase:', err);
+      }
+    }
+
+    return brand;
+  },
+
+  async deleteBrand(id: string): Promise<boolean> {
+    const brands = await this.getBrands();
+    const filtered = brands.filter((b) => b.id !== id);
+    setStored('brands', filtered);
+
+    if (supabase) {
+      try {
+        await supabase.from('brands').delete().eq('id', id);
+      } catch (err) {
+        console.error('Error deleting brand from Supabase:', err);
+      }
+    }
+    return true;
+  },
+
   // 2. Products
   async getProducts(): Promise<Product[]> {
     if (supabase) {
@@ -439,52 +608,141 @@ export const DataService = {
 
     if (supabase) {
       try {
-        const { error: prodError } = await supabase.from('products').upsert({
+        // Ensure the product's category exists in Supabase if category_id is present
+        if (product.category_id) {
+          const allCats = getStored<Category[]>('categories', INITIAL_CATEGORIES);
+          const matchedCat = allCats.find((c) => c.id === product.category_id);
+          if (matchedCat) {
+            await supabase.from('categories').upsert({
+              id: matchedCat.id,
+              name: matchedCat.name,
+              bn_name: matchedCat.bn_name || matchedCat.name,
+              slug: matchedCat.slug,
+              description: matchedCat.description || '',
+              image: matchedCat.image || '',
+              banner_image: matchedCat.banner_image || null,
+              display_order: matchedCat.display_order || 0,
+              is_active: matchedCat.is_active !== false,
+              show_on_homepage: matchedCat.show_on_homepage !== false
+            });
+          }
+        }
+
+        const fullProductPayload = {
           id: product.id,
           name: product.name,
           bn_name: product.bn_name || product.name,
           slug: product.slug,
           sku: product.sku,
-          category_id: product.category_id,
-          category_name: product.category_name,
+          category_id: product.category_id || null,
+          category_name: product.category_name || '',
           main_image: product.main_image,
-          gallery_images: product.gallery_images,
-          short_description: product.short_description,
-          long_description: product.long_description,
-          buying_price: product.buying_price,
-          selling_price: product.selling_price,
-          discount_price: product.discount_price,
-          stock: product.stock,
-          rating: product.rating,
-          review_count: product.review_count,
-          ingredients: product.ingredients,
-          nutrition: product.nutrition,
-          benefits: product.benefits,
-          how_to_use: product.how_to_use,
-          storage_instructions: product.storage_instructions,
-          delivery_info: product.delivery_info,
-          seo_title: product.seo_title,
-          seo_description: product.seo_description,
-          status: product.status,
-          is_popular: product.is_popular,
-          is_bestseller: product.is_bestseller,
-          is_combo: product.is_combo
-        });
+          gallery_images: product.gallery_images || [],
+          short_description: product.short_description || '',
+          long_description: product.long_description || '',
+          buying_price: Number(product.buying_price) || 0,
+          selling_price: Number(product.selling_price) || 0,
+          discount_price: product.discount_price ? Number(product.discount_price) : null,
+          original_price: product.original_price ? Number(product.original_price) : null,
+          stock: Number(product.stock) || 0,
+          rating: Number(product.rating) || 5.0,
+          review_count: Number(product.review_count) || 0,
+          brand: product.brand || 'SHAD SODAI',
+          sizes: product.sizes || [],
+          colors: product.colors || [],
+          fabric: product.fabric || null,
+          material: product.material || null,
+          fit: product.fit || null,
+          pattern: product.pattern || null,
+          sleeve: product.sleeve || null,
+          neck_collar: product.neck_collar || null,
+          gender: product.gender || null,
+          season: product.season || null,
+          origin: product.origin || null,
+          care_instructions: product.care_instructions || null,
+          exchange_policy: product.exchange_policy || null,
+          size_chart: product.size_chart || [],
+          tags: product.tags || [],
+          size_variants: product.size_variants || product.sizeVariants || [],
+          ingredients: product.ingredients || null,
+          nutrition: product.nutrition || {},
+          benefits: product.benefits || [],
+          how_to_use: product.how_to_use || null,
+          storage_instructions: product.storage_instructions || null,
+          delivery_info: product.delivery_info || '',
+          seo_title: product.seo_title || product.name,
+          seo_description: product.seo_description || product.short_description || '',
+          status: product.status || 'active',
+          is_featured: Boolean(product.is_featured),
+          is_popular: Boolean(product.is_popular),
+          is_bestseller: Boolean(product.is_bestseller),
+          is_combo: Boolean(product.is_combo)
+        };
 
-        if (prodError) throw prodError;
+        const { error: prodError } = await supabase.from('products').upsert(fullProductPayload);
+
+        if (prodError) {
+          // Fallback to base columns if extended columns are not yet migrated
+          const { error: fallbackError } = await supabase.from('products').upsert({
+            id: product.id,
+            name: product.name,
+            bn_name: product.bn_name || product.name,
+            slug: product.slug,
+            sku: product.sku,
+            category_id: product.category_id || null,
+            category_name: product.category_name || '',
+            main_image: product.main_image,
+            gallery_images: product.gallery_images || [],
+            short_description: product.short_description || '',
+            long_description: product.long_description || '',
+            buying_price: Number(product.buying_price) || 0,
+            selling_price: Number(product.selling_price) || 0,
+            discount_price: product.discount_price ? Number(product.discount_price) : null,
+            stock: Number(product.stock) || 0,
+            rating: Number(product.rating) || 5.0,
+            review_count: Number(product.review_count) || 0,
+            delivery_info: product.delivery_info || '',
+            seo_title: product.seo_title || product.name,
+            seo_description: product.seo_description || product.short_description || '',
+            status: product.status || 'active',
+            is_popular: Boolean(product.is_popular),
+            is_bestseller: Boolean(product.is_bestseller),
+            is_combo: Boolean(product.is_combo)
+          });
+          if (fallbackError) throw fallbackError;
+        }
 
         // Upsert variants
         if (product.variants && product.variants.length > 0) {
-          const variantsPayload = product.variants.map((v) => ({
-            id: v.id,
-            product_id: product.id,
-            weight: v.weight,
-            price: v.price,
-            original_price: v.original_price,
-            stock: v.stock,
-            sku: v.sku || `${product.sku}-${v.weight}`
-          }));
-          await supabase.from('product_variants').upsert(variantsPayload);
+          const variantsPayload = product.variants.map((v, idx) => {
+            const label = v.weight || [v.size, v.color].filter(Boolean).join(' / ') || 'Standard';
+            return {
+              id: v.id || `var-${product.id}-${idx}`,
+              product_id: product.id,
+              weight: label,
+              size: v.size || null,
+              color: v.color || null,
+              color_code: v.color_code || null,
+              image: v.image || product.main_image || null,
+              price: Number(v.price) || Number(product.selling_price) || 0,
+              original_price: Number(v.original_price) || Number(product.discount_price) || Number(product.selling_price) || 0,
+              stock: Number(v.stock) ?? Number(product.stock) ?? 10,
+              sku: v.sku || `${product.sku}-${label}`
+            };
+          });
+          const { error: varErr } = await supabase.from('product_variants').upsert(variantsPayload);
+          if (varErr) {
+            const basicVariantsPayload = variantsPayload.map((v) => ({
+              id: v.id,
+              product_id: v.product_id,
+              weight: v.weight,
+              price: v.price,
+              original_price: v.original_price,
+              stock: v.stock,
+              sku: v.sku
+            }));
+            await supabase.from('product_variants').upsert(basicVariantsPayload);
+          }
         }
       } catch (err) {
         console.error('Error saving product in Supabase:', err);
@@ -603,37 +861,98 @@ export const DataService = {
 
     if (supabase) {
       try {
-        const { error: ordError } = await supabase.from('orders').insert({
+        // 1. Upsert Order with all fields (fallback to base fields if needed)
+        const fullOrderPayload = {
           id: order.id,
           order_number: order.order_number,
+          user_id: order.user_id || null,
           customer_name: order.customer_name,
+          customer_email: order.customer_email || null,
           customer_phone: order.customer_phone,
           customer_address: order.customer_address,
-          customer_city: order.customer_city,
-          order_notes: order.order_notes,
-          subtotal: order.subtotal,
-          delivery_charge: order.delivery_charge,
-          discount: order.discount,
-          total: order.total,
+          customer_city: order.customer_city || 'Dhaka',
+          order_notes: order.order_notes || null,
+          subtotal: Number(order.subtotal) || 0,
+          delivery_charge: Number(order.delivery_charge) || 0,
+          discount: Number(order.discount) || 0,
+          total: Number(order.total) || 0,
+          total_amount: Number(order.total_amount ?? order.total) || 0,
           payment_method: order.payment_method,
-          payment_status: order.payment_status,
-          order_status: order.order_status
-        });
+          payment_status: order.payment_status || 'pending',
+          order_status: order.order_status || 'pending',
+          courier_name: order.courier_name || null,
+          tracking_id: order.tracking_id || null,
+          shipment_status: order.shipment_status || null,
+          shipment_date: order.shipment_date || null,
+          transaction_id: order.transaction_id || null,
+          sender_phone: order.sender_phone || null,
+          payment_proof: order.payment_proof || null,
+          created_at: order.created_at || new Date().toISOString()
+        };
 
-        if (ordError) throw ordError;
+        const { error: ordError } = await supabase.from('orders').upsert(fullOrderPayload);
 
+        if (ordError) {
+          const { error: fallbackOrdError } = await supabase.from('orders').upsert({
+            id: order.id,
+            order_number: order.order_number,
+            user_id: order.user_id || null,
+            customer_name: order.customer_name,
+            customer_email: order.customer_email || null,
+            customer_phone: order.customer_phone,
+            customer_address: order.customer_address,
+            customer_city: order.customer_city || 'Dhaka',
+            order_notes: order.order_notes || null,
+            subtotal: Number(order.subtotal) || 0,
+            delivery_charge: Number(order.delivery_charge) || 0,
+            discount: Number(order.discount) || 0,
+            total: Number(order.total) || 0,
+            payment_method: order.payment_method,
+            payment_status: order.payment_status || 'pending',
+            order_status: order.order_status || 'pending'
+          });
+          if (fallbackOrdError) throw fallbackOrdError;
+        }
+
+        // 2. Insert Order Items (and ensure referenced products exist in Supabase)
         if (order.items && order.items.length > 0) {
-          const itemsPayload = order.items.map((it) => ({
+          const allLocalProducts = getStored<Product[]>('products', INITIAL_PRODUCTS);
+          for (const it of order.items) {
+            if (it.product_id) {
+              const matchedProd = allLocalProducts.find((p) => p.id === it.product_id);
+              if (matchedProd) {
+                await this.saveProduct(matchedProd);
+              }
+            }
+          }
+
+          const fullItemsPayload = order.items.map((it) => ({
             order_id: order.id,
-            product_id: it.product_id,
+            product_id: it.product_id || null,
             product_name: it.product_name,
-            variant_weight: it.variant_weight,
-            quantity: it.quantity,
-            unit_price: it.unit_price,
-            total_price: it.total_price,
-            image: it.image
+            variant_weight: it.variant_weight || [it.variant_size, it.variant_color].filter(Boolean).join(' / ') || 'Standard',
+            variant_size: it.variant_size || null,
+            variant_color: it.variant_color || null,
+            quantity: Number(it.quantity) || 1,
+            unit_price: Number(it.unit_price) || 0,
+            total_price: Number(it.total_price) || (Number(it.unit_price) || 0) * (Number(it.quantity) || 1),
+            image: it.image || ''
           }));
-          await supabase.from('order_items').insert(itemsPayload);
+
+          const { error: itemsErr } = await supabase.from('order_items').insert(fullItemsPayload);
+          if (itemsErr) {
+            const basicItemsPayload = fullItemsPayload.map((it) => ({
+              order_id: it.order_id,
+              product_id: it.product_id,
+              product_name: it.product_name,
+              variant_weight: it.variant_weight,
+              quantity: it.quantity,
+              unit_price: it.unit_price,
+              total_price: it.total_price,
+              image: it.image
+            }));
+            await supabase.from('order_items').insert(basicItemsPayload);
+          }
         }
       } catch (err) {
         console.error('Error saving order in Supabase:', err);
@@ -1614,10 +1933,10 @@ export const DataService = {
 
   // Complete SQL Schema script for direct execution in Supabase SQL editor
   getSupabaseSchemaSQL(): string {
-    return `-- ==========================================
--- SHAD SODAI PREMIUM DRY FOOD DATABASE SCHEMA
--- Execute in your Supabase SQL Editor
--- ==========================================
+    return `-- ============================================================================
+-- SHAD SODAI — COMPLETE SUPABASE POSTGRESQL SCHEMA (PRODUCTS, ORDERS & CMS)
+-- Copy & Run this entire script in your Supabase Dashboard -> SQL Editor
+-- ============================================================================
 
 -- 1. Categories Table
 create table if not exists categories (
@@ -1628,20 +1947,21 @@ create table if not exists categories (
   description text,
   image text,
   banner_image text,
+  cover_photo text,
   display_order integer default 0,
   is_active boolean default true,
   show_on_homepage boolean default true,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 2. Products Table
+-- 2. Products Table (Supports Apparel/Clothing & General Products)
 create table if not exists products (
   id text primary key,
   name text not null,
   bn_name text,
   slug text unique not null,
-  sku text unique,
-  category_id text references categories(id) on delete set null,
+  sku text,
+  category_id text,
   category_name text,
   main_image text not null,
   gallery_images text[] default '{}',
@@ -1650,9 +1970,27 @@ create table if not exists products (
   buying_price numeric default 0,
   selling_price numeric not null,
   discount_price numeric,
+  original_price numeric,
   stock integer default 0,
   rating numeric default 5.0,
   review_count integer default 0,
+  brand text default 'SHAD SODAI',
+  sizes text[] default '{}',
+  colors jsonb default '[]'::jsonb,
+  fabric text,
+  material text,
+  fit text,
+  pattern text,
+  sleeve text,
+  neck_collar text,
+  gender text,
+  season text,
+  origin text,
+  care_instructions text,
+  exchange_policy text,
+  size_chart jsonb default '[]'::jsonb,
+  tags text[] default '{}',
+  size_variants jsonb default '[]'::jsonb,
   ingredients text,
   nutrition jsonb default '{}'::jsonb,
   benefits text[] default '{}',
@@ -1662,27 +2000,63 @@ create table if not exists products (
   seo_title text,
   seo_description text,
   status text default 'active',
+  is_featured boolean default false,
   is_popular boolean default false,
   is_bestseller boolean default false,
   is_combo boolean default false,
+  sale_count integer default 0,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
+
+-- Ensure all columns exist if products table was created earlier
+alter table products add column if not exists original_price numeric;
+alter table products add column if not exists brand text default 'SHAD SODAI';
+alter table products add column if not exists sizes text[] default '{}';
+alter table products add column if not exists colors jsonb default '[]'::jsonb;
+alter table products add column if not exists fabric text;
+alter table products add column if not exists material text;
+alter table products add column if not exists fit text;
+alter table products add column if not exists pattern text;
+alter table products add column if not exists sleeve text;
+alter table products add column if not exists neck_collar text;
+alter table products add column if not exists gender text;
+alter table products add column if not exists season text;
+alter table products add column if not exists origin text;
+alter table products add column if not exists care_instructions text;
+alter table products add column if not exists exchange_policy text;
+alter table products add column if not exists size_chart jsonb default '[]'::jsonb;
+alter table products add column if not exists tags text[] default '{}';
+alter table products add column if not exists size_variants jsonb default '[]'::jsonb;
+alter table products add column if not exists is_featured boolean default false;
+alter table products add column if not exists sale_count integer default 0;
+alter table products drop constraint if exists products_sku_key;
+alter table products drop constraint if exists products_category_id_fkey;
 
 -- 3. Product Variants Table
 create table if not exists product_variants (
   id text primary key,
   product_id text references products(id) on delete cascade,
-  weight text not null,
-  price numeric not null,
+  weight text default 'Standard',
+  size text,
+  color text,
+  color_code text,
+  image text,
+  price numeric not null default 0,
   original_price numeric,
   stock integer default 10,
   sku text
 );
 
--- 4. Customers & Profiles Table
+alter table product_variants alter column weight drop not null;
+alter table product_variants add column if not exists size text;
+alter table product_variants add column if not exists color text;
+alter table product_variants add column if not exists color_code text;
+alter table product_variants add column if not exists image text;
+
+-- 4. Customers Table
 create table if not exists customers (
   id text primary key,
-  user_id uuid references auth.users(id) on delete cascade,
+  user_id uuid,
   name text not null,
   email text,
   phone text,
@@ -1692,7 +2066,7 @@ create table if not exists customers (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 5. Orders Table
+-- 5. Orders Table (Supports Admin Add Order & Customer Checkout)
 create table if not exists orders (
   id text primary key,
   order_number text unique not null,
@@ -1701,35 +2075,101 @@ create table if not exists orders (
   customer_email text,
   customer_phone text not null,
   customer_address text not null,
-  customer_city text not null,
+  customer_city text not null default 'Dhaka',
   order_notes text,
-  subtotal numeric not null,
-  delivery_charge numeric not null,
+  subtotal numeric not null default 0,
+  delivery_charge numeric not null default 0,
   discount numeric default 0,
-  total numeric not null,
-  payment_method text not null,
+  total numeric not null default 0,
+  total_amount numeric default 0,
+  payment_method text not null default 'cod',
   payment_status text default 'pending',
   order_status text default 'pending',
+  courier_name text,
+  tracking_id text,
+  shipment_status text,
+  shipment_date text,
+  transaction_id text,
+  sender_phone text,
+  payment_proof text,
+  is_incomplete boolean default false,
+  bill_id text,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 6. Order Items Table
+alter table orders add column if not exists total_amount numeric default 0;
+alter table orders add column if not exists courier_name text;
+alter table orders add column if not exists tracking_id text;
+alter table orders add column if not exists shipment_status text;
+alter table orders add column if not exists shipment_date text;
+alter table orders add column if not exists transaction_id text;
+alter table orders add column if not exists sender_phone text;
+alter table orders add column if not exists payment_proof text;
+alter table orders add column if not exists is_incomplete boolean default false;
+alter table orders add column if not exists bill_id text;
+
+-- 6. Order Items Table (Links Ordered Products to Orders)
 create table if not exists order_items (
   id uuid primary key default gen_random_uuid(),
   order_id text references orders(id) on delete cascade,
-  product_id text references products(id) on delete set null,
+  product_id text,
   product_name text not null,
   variant_weight text,
+  variant_size text,
+  variant_color text,
   quantity integer not null default 1,
-  unit_price numeric not null,
-  total_price numeric not null,
+  unit_price numeric not null default 0,
+  total_price numeric not null default 0,
   image text
 );
 
--- 7. Reviews Table
+alter table order_items drop constraint if exists order_items_product_id_fkey;
+alter table order_items add column if not exists variant_size text;
+alter table order_items add column if not exists variant_color text;
+
+-- 7. Payment Methods & Payment Records Tables
+create table if not exists payment_methods (
+  id text primary key,
+  method text unique not null,
+  title text not null,
+  category text,
+  account_type text,
+  account_number text,
+  account_name text,
+  bank_name text,
+  branch_name text,
+  routing_number text,
+  instructions text,
+  logo_url text,
+  is_enabled boolean default false,
+  display_order integer default 1,
+  updated_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+create table if not exists payment_records (
+  id text primary key,
+  order_id text,
+  order_number text,
+  customer_id text,
+  customer_name text,
+  customer_phone text,
+  payment_method text,
+  account_type text,
+  account_number text,
+  amount numeric default 0,
+  transaction_id text,
+  sender_phone text,
+  payment_proof text,
+  status text default 'PENDING',
+  admin_note text,
+  created_at timestamp with time zone default timezone('utc'::text, now()),
+  verified_at timestamp with time zone
+);
+
+-- 8. Reviews Table
 create table if not exists reviews (
   id text primary key,
-  product_id text references products(id) on delete cascade,
+  product_id text,
   product_name text,
   customer_name text not null,
   rating integer not null check (rating between 1 and 5),
@@ -1739,19 +2179,23 @@ create table if not exists reviews (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 8. Banners Table
+-- 9. Banners Table
 create table if not exists banners (
   id text primary key,
-  title text not null,
+  title text,
   subtitle text,
   button_text text default 'SHOP NOW',
   button_link text default '#shop',
   image_url text not null,
   type text default 'hero',
-  is_active boolean default true
+  is_active boolean default true,
+  homepage_enabled boolean default true,
+  product_id text,
+  display_order integer default 0,
+  created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 9. Process Steps Table ("OUR PROCESS / FROM FARM TO PACK")
+-- 10. Process Steps Table
 create table if not exists process_steps (
   id text primary key,
   title text not null,
@@ -1764,7 +2208,7 @@ create table if not exists process_steps (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 10. Support Messages Table
+-- 11. Support Messages Table
 create table if not exists support_messages (
   id text primary key,
   user_id text,
@@ -1777,7 +2221,7 @@ create table if not exists support_messages (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 11. Quick Links & Policy Pages Table
+-- 12. Quick Links & Policy Pages Tables
 create table if not exists quick_links (
   id text primary key,
   title text not null,
@@ -1792,7 +2236,6 @@ create table if not exists quick_links (
   updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 12. Quick Link Sections Table
 create table if not exists quick_link_sections (
   id text primary key,
   quick_link_id text references quick_links(id) on delete cascade,
@@ -1806,13 +2249,15 @@ create table if not exists quick_link_sections (
   updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 13. Enable Row Level Security (RLS)
+-- 13. Row Level Security (RLS) & Full Access Policies for Storefront + Admin Panel
 alter table categories enable row level security;
 alter table products enable row level security;
 alter table product_variants enable row level security;
 alter table customers enable row level security;
 alter table orders enable row level security;
 alter table order_items enable row level security;
+alter table payment_methods enable row level security;
+alter table payment_records enable row level security;
 alter table reviews enable row level security;
 alter table banners enable row level security;
 alter table process_steps enable row level security;
@@ -1820,22 +2265,47 @@ alter table support_messages enable row level security;
 alter table quick_links enable row level security;
 alter table quick_link_sections enable row level security;
 
--- Public read policies
-create policy "Allow public read categories" on categories for select using (true);
-create policy "Allow public read products" on products for select using (true);
-create policy "Allow public read product_variants" on product_variants for select using (true);
-create policy "Allow public read reviews" on reviews for select using (true);
-create policy "Allow public read banners" on banners for select using (true);
-create policy "Allow public read process_steps" on process_steps for select using (true);
-create policy "Allow public manage quick_links" on quick_links for all using (true);
-create policy "Allow public manage quick_link_sections" on quick_link_sections for all using (true);
-create policy "Allow public insert orders" on orders for insert with check (true);
-create policy "Allow public insert order_items" on order_items for insert with check (true);
-create policy "Allow public insert reviews" on reviews for insert with check (true);
-create policy "Allow public insert support_messages" on support_messages for insert with check (true);
-create policy "Allow public manage process_steps" on process_steps for all using (true);
-create policy "Allow users access own customer profile" on customers for all using (true);
-create policy "Allow customers view own orders" on orders for select using (true);
+drop policy if exists "Allow full access categories" on categories;
+create policy "Allow full access categories" on categories for all using (true) with check (true);
+
+drop policy if exists "Allow full access products" on products;
+create policy "Allow full access products" on products for all using (true) with check (true);
+
+drop policy if exists "Allow full access product_variants" on product_variants;
+create policy "Allow full access product_variants" on product_variants for all using (true) with check (true);
+
+drop policy if exists "Allow full access customers" on customers;
+create policy "Allow full access customers" on customers for all using (true) with check (true);
+
+drop policy if exists "Allow full access orders" on orders;
+create policy "Allow full access orders" on orders for all using (true) with check (true);
+
+drop policy if exists "Allow full access order_items" on order_items;
+create policy "Allow full access order_items" on order_items for all using (true) with check (true);
+
+drop policy if exists "Allow full access payment_methods" on payment_methods;
+create policy "Allow full access payment_methods" on payment_methods for all using (true) with check (true);
+
+drop policy if exists "Allow full access payment_records" on payment_records;
+create policy "Allow full access payment_records" on payment_records for all using (true) with check (true);
+
+drop policy if exists "Allow full access reviews" on reviews;
+create policy "Allow full access reviews" on reviews for all using (true) with check (true);
+
+drop policy if exists "Allow full access banners" on banners;
+create policy "Allow full access banners" on banners for all using (true) with check (true);
+
+drop policy if exists "Allow full access process_steps" on process_steps;
+create policy "Allow full access process_steps" on process_steps for all using (true) with check (true);
+
+drop policy if exists "Allow full access support_messages" on support_messages;
+create policy "Allow full access support_messages" on support_messages for all using (true) with check (true);
+
+drop policy if exists "Allow full access quick_links" on quick_links;
+create policy "Allow full access quick_links" on quick_links for all using (true) with check (true);
+
+drop policy if exists "Allow full access quick_link_sections" on quick_link_sections;
+create policy "Allow full access quick_link_sections" on quick_link_sections for all using (true) with check (true);
 `;
   },
 

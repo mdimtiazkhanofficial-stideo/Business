@@ -2,9 +2,12 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../../context/StoreContext';
 import { ArrowRight } from 'lucide-react';
+import { Category } from '../../types';
 
 export const CategoriesPage: React.FC = () => {
   const { categories, products } = useStore();
+
+  const uniqueCategories: Category[] = Array.from(new Map<string, Category>((categories || []).map((c) => [c.id, c])).values());
 
   return (
     <div className="bg-[#FFFDF7] min-h-screen py-8 sm:py-12">
@@ -25,7 +28,7 @@ export const CategoriesPage: React.FC = () => {
 
         {/* Categories Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {categories.map((category) => {
+          {uniqueCategories.map((category) => {
             const count = products.filter((p) => p.category_id === category.id).length;
 
             return (

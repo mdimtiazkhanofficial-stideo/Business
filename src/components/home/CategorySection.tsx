@@ -1,62 +1,52 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../../context/StoreContext';
-import { ArrowRight, ChevronRight } from 'lucide-react';
+import { ArrowRight, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Category } from '../../types';
 
 export const CategorySection: React.FC = () => {
   const { categories, setSelectedCategoryId } = useStore();
   const navigate = useNavigate();
   const sliderRef = useRef<HTMLDivElement>(null);
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-  const pauseTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
-  const activeCategories = categories.filter((c) => c.is_active && c.show_on_homepage);
-  const categoryList = activeCategories.length > 0 ? activeCategories : categories.filter((c) => c.is_active);
+  // Deduplicate categories by ID and filter active ones
+  const uniqueCategories: Category[] = Array.from(
+    new Map<string, Category>((categories || []).map((c) => [c.id, c])).values()
+  );
 
-  // Pause movement for 5 seconds on user touch / swipe / click / drag
-  const triggerPause = useCallback(() => {
-    setIsPaused(true);
-    if (pauseTimerRef.current) {
-      clearTimeout(pauseTimerRef.current);
+  const activeCategories = uniqueCategories.filter((c) => c.is_active && c.show_on_homepage);
+  const categoryList = activeCategories.length > 0 ? activeCategories : uniqueCategories.filter((c) => c.is_active);
+
+  const checkScroll = useCallback(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 10);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 10);
+  }, []);
+
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    checkScroll();
+    el.addEventListener('scroll', checkScroll, { passive: true });
+    window.addEventListener('resize', checkScroll);
+    return () => {
+      el.removeEventListener('scroll', checkScroll);
+      window.removeEventListener('resize', checkScroll);
+    };
+  }, [categoryList.length, checkScroll]);
+
+  const scroll = (direction: 'left' | 'right') => {
+    if (sliderRef.current) {
+      const scrollAmount = 260;
+      sliderRef.current.scrollBy({
+        left: direction === 'left' ? -scrollAmount : scrollAmount,
+        behavior: 'smooth'
+      });
     }
-    pauseTimerRef.current = setTimeout(() => {
-      setIsPaused(false);
-    }, 5000);
-  }, []);
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (pauseTimerRef.current) {
-        clearTimeout(pauseTimerRef.current);
-      }
-    };
-  }, []);
-
-  // Continuous smooth auto-slider moving from right to left
-  useEffect(() => {
-    const slider = sliderRef.current;
-    if (!slider || categoryList.length === 0) return;
-
-    let animationFrameId: number;
-    const speed = 0.6;
-
-    const step = () => {
-      if (!isPaused && slider) {
-        slider.scrollLeft += speed;
-        if (slider.scrollLeft >= slider.scrollWidth / 2) {
-          slider.scrollLeft -= slider.scrollWidth / 2;
-        }
-      }
-      animationFrameId = requestAnimationFrame(step);
-    };
-
-    animationFrameId = requestAnimationFrame(step);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [isPaused, categoryList.length]);
+  };
 
   const handleSelectCategory = (categoryId: string) => {
     setSelectedCategoryId(categoryId);
@@ -66,9 +56,6 @@ export const CategorySection: React.FC = () => {
   if (categoryList.length === 0) {
     return null;
   }
-
-  // Duplicate list to create infinite seamless scrolling illusion
-  const loopedCategories = [...categoryList, ...categoryList, ...categoryList];
 
   return (
     <section className="py-5 sm:py-7 bg-[#FFFDF7] border-b border-stone-200 overflow-hidden w-full max-w-full overflow-x-clip">
@@ -85,32 +72,58 @@ export const CategorySection: React.FC = () => {
             </h2>
           </div>
 
-          <Link
-            to="/categories"
-            className="text-[11px] sm:text-xs font-bold text-[#1B4332] hover:text-[#2D6A4F] flex items-center gap-1 uppercase tracking-wider transition-colors shrink-0"
-          >
-            <span>All Categories</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          <div className="flex items-center gap-3">
+            {/* Scroll navigation buttons if content overflows */}
+            {(canScrollLeft || canScrollRight) && (
+              <div className="hidden sm:flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => scroll('left')}
+                  disabled={!canScrollLeft}
+                  aria-label="Previous categories"
+                  className={`p-1.5 rounded-full border transition-colors ${
+                    canScrollLeft
+                      ? 'border-stone-300 hover:border-stone-500 text-stone-700 hover:bg-stone-100 cursor-pointer'
+                      : 'border-stone-200 text-stone-300 cursor-not-allowed'
+                  }`}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scroll('right')}
+                  disabled={!canScrollRight}
+                  aria-label="Next categories"
+                  className={`p-1.5 rounded-full border transition-colors ${
+                    canScrollRight
+                      ? 'border-stone-300 hover:border-stone-500 text-stone-700 hover:bg-stone-100 cursor-pointer'
+                      : 'border-stone-200 text-stone-300 cursor-not-allowed'
+                  }`}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <Link
+              to="/categories"
+              className="text-[11px] sm:text-xs font-bold text-[#1B4332] hover:text-[#2D6A4F] flex items-center gap-1 uppercase tracking-wider transition-colors shrink-0"
+            >
+              <span>All Categories</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
 
-        {/* Automatic Category Slider (Small Square Cards) */}
+        {/* Category List - Each category rendered strictly once */}
         <div
           ref={sliderRef}
-          onPointerDown={triggerPause}
-          onTouchStart={triggerPause}
-          onWheel={triggerPause}
-          onMouseEnter={() => setIsPaused(true)}
-          onMouseLeave={() => {
-            if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
-            pauseTimerRef.current = setTimeout(() => setIsPaused(false), 2000);
-          }}
-          className="flex gap-2.5 sm:gap-4 overflow-x-auto no-scrollbar scroll-smooth py-1 cursor-grab active:cursor-grabbing select-none w-full max-w-full"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', overscrollBehaviorX: 'contain' }}
+          className="flex gap-2.5 sm:gap-4 overflow-x-auto no-scrollbar scroll-smooth py-1 select-none w-full max-w-full"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
-          {loopedCategories.map((cat, index) => (
+          {categoryList.map((cat) => (
             <div
-              key={`${cat.id}-${index}`}
+              key={cat.id}
               onClick={() => handleSelectCategory(cat.id)}
               className="flex-shrink-0 w-24 sm:w-28 md:w-32 bg-white border border-stone-200 hover:border-[#1B4332] transition-all p-2 rounded-xs group cursor-pointer shadow-2xs text-center flex flex-col items-center justify-between"
             >

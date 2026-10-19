@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { Product, Category, Brand, CartItem, Order, OrderItem, Review, Banner, SiteSettings, ProductVariant, ProcessStep, User, Customer, SupportMessage, StockHistoryRecord, CalculationRecord, SeoSettings, AdminProfile, PaymentAccountConfig, PaymentRecord, QuickLinkItem } from '../types';
 import { DataService, AuthService, isSupabaseConfigured, getActiveSupabaseConfig, updateSupabaseConfig, resetSupabaseConfig } from '../services/supabase';
 import { INITIAL_QUICK_LINKS, INITIAL_BRANDS } from '../data/initialCatalog';
+import { useAuth, UseAuthReturn } from '../hooks/useAuth';
 
 interface Toast {
   id: string;
@@ -44,7 +45,9 @@ interface StoreContextType {
   adminProfile: AdminProfile;
   saveAdminProfile: (profile: AdminProfile) => Promise<void>;
 
-  // Auth & Roles (TAZU MART Auth System)
+  // Auth & Roles (Supabase Auth System)
+  auth: UseAuthReturn;
+  isAuthenticated: boolean;
   currentUser: User | null;
   authRole: 'customer' | 'admin' | 'guest';
   login: (emailOrPhone: string, password?: string) => Promise<{ success: boolean; user?: User; error?: string }>;
@@ -218,9 +221,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [supabaseConfig, setSupabaseConfigState] = useState(() => getActiveSupabaseConfig());
   const [isSupabaseActive, setIsSupabaseActive] = useState<boolean>(() => isSupabaseConfigured);
 
-  // Auth state
-  const [currentUser, setCurrentUser] = useState<User | null>(() => AuthService.getCurrentUser());
-  const authRole: 'customer' | 'admin' | 'guest' = currentUser ? currentUser.role : 'guest';
+  // Auth Hook Integration with Supabase
+  const auth = useAuth();
+  const { currentUser, authRole, isAuthenticated } = auth;
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -356,7 +359,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         DataService.getPaymentRecords(),
         DataService.getQuickLinks()
       ]);
-      setCategories(cats);
+      // Deduplicate categories by ID to ensure each appears exactly once
+      const uniqueCats = Array.from(new Map<string, Category>((cats || []).map((c) => [c.id, c])).values());
+      setCategories(uniqueCats);
       setBrands(brds);
       setProducts(prods);
       setBanners(bans);
@@ -422,19 +427,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Supabase disconnected. Using local database store.', 'info');
   }, [refreshData, showToast]);
 
-  // Auth Methods
+  // Auth Methods (Integrated with Supabase useAuth hook)
   const login = useCallback(
     async (emailOrPhone: string, password?: string) => {
-      const res = await AuthService.signIn(emailOrPhone, password);
+      const res = await auth.login(emailOrPhone, password);
       if (res.user) {
-        setCurrentUser(res.user);
         showToast(`Welcome back, ${res.user.name}!`);
         return { success: true, user: res.user };
       }
       showToast(res.error || 'Login failed. Please check your credentials.', 'error');
       return { success: false, error: res.error };
     },
-    [showToast]
+    [auth, showToast]
   );
 
   const register = useCallback(
@@ -446,9 +450,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       address?: string;
       city?: string;
     }) => {
-      const res = await AuthService.signUp(data);
+      const res = await auth.register(data);
       if (res.user) {
-        setCurrentUser(res.user);
         showToast(`Welcome to SHAD SODAI, ${res.user.name}!`);
         // refresh customer list
         const updatedCusts = await DataService.getCustomers();
@@ -458,21 +461,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(res.error || 'Registration failed.', 'error');
       return { success: false, error: res.error };
     },
-    [showToast]
+    [auth, showToast]
   );
 
   const logout = useCallback(async () => {
-    await AuthService.signOut();
-    setCurrentUser(null);
+    await auth.logout();
     showToast('Signed out successfully', 'info');
-  }, [showToast]);
+  }, [auth, showToast]);
 
   const updateProfile = useCallback(
     async (data: Partial<User>) => {
       if (!currentUser) return false;
-      const res = await AuthService.updateProfile(currentUser.id, data);
-      if (res.user) {
-        setCurrentUser(res.user);
+      const success = await auth.updateProfile(data);
+      if (success) {
         showToast('Profile updated successfully!');
         const updatedCusts = await DataService.getCustomers();
         setCustomers(updatedCusts);
@@ -481,7 +482,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast('Failed to update profile', 'error');
       return false;
     },
-    [currentUser, showToast]
+    [currentUser, auth, showToast]
   );
 
   // Customer Support Helpdesk
@@ -1162,6 +1163,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         saveSeoSettings,
         adminProfile,
         saveAdminProfile,
+        auth,
+        isAuthenticated,
         currentUser,
         authRole,
         login,
@@ -1250,3 +1253,5 @@ export const useStore = () => {
   }
   return context;
 };
+
+export { useAuth } from '../hooks/useAuth';

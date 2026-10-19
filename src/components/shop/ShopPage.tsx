@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../../context/StoreContext';
 import { ProductGrid } from '../home/ProductGrid';
 import { ArrowUpDown, Search } from 'lucide-react';
+import { Category } from '../../types';
 
 export const ShopPage: React.FC = () => {
   const { products, categories, selectedCategoryId, setSelectedCategoryId, searchQuery, setSearchQuery } = useStore();
@@ -21,7 +22,8 @@ export const ShopPage: React.FC = () => {
     }
   }, [searchParams, setSelectedCategoryId, setSearchQuery]);
 
-  const activeCategory = categories.find((c) => c.id === selectedCategoryId);
+  const uniqueCategories: Category[] = Array.from(new Map<string, Category>((categories || []).map((c) => [c.id, c])).values());
+  const activeCategory = uniqueCategories.find((c) => c.id === selectedCategoryId);
 
   const handleCategoryClick = (catId: string | null) => {
     setSelectedCategoryId(catId);
@@ -85,7 +87,7 @@ export const ShopPage: React.FC = () => {
             >
               All Products
             </button>
-            {categories.map((c) => (
+            {uniqueCategories.map((c) => (
               <button
                 key={c.id}
                 onClick={() => handleCategoryClick(c.id)}
